@@ -143,6 +143,10 @@ def main():
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     os.makedirs(PROCESSED_DIR, exist_ok=True)
 
+    print("\n--- Diagnostic: Items visible in Shared With Me ---")
+    subprocess.run(["rclone", "lsf", "--drive-shared-with-me", "gdrive:"], check=False)
+    print("--------------------------------------------------\n")
+
     candidates = get_candidate_remotes(GDRIVE_REMOTE)
     print("\n=================== GOOGLE DRIVE TARGET SEARCH ===================")
     print(f"Candidate Targets to try: {candidates}")
@@ -154,7 +158,6 @@ def main():
     for target in candidates:
         print(f"Trying Google Drive target: '{target}' ...")
         
-        # ডাউনলোড ফোল্ডার ফ্রেশ করা
         for item in os.listdir(DOWNLOAD_DIR):
             item_path = os.path.join(DOWNLOAD_DIR, item)
             if os.path.isfile(item_path):
@@ -163,7 +166,6 @@ def main():
         res = subprocess.run(["rclone", "copy", "--drive-shared-with-me", target, DOWNLOAD_DIR], capture_output=True, text=True)
         
         downloaded = os.listdir(DOWNLOAD_DIR)
-        # যতক্ষণ না ফাইল ডাউনলোড হচ্ছে, লুপ থামবে না
         if res.returncode == 0 and len(downloaded) > 0:
             print(f"SUCCESS: Connected to '{target}' and downloaded {len(downloaded)} item(s)!")
             remote_target = target
@@ -245,7 +247,7 @@ def main():
             video_id = response.get("id")
             print(f"Successfully Uploaded! Video Link: https://youtu.be/{video_id}")
 
-            # ৩. ড্রাইভ থেকে ফাইল ডিলিট
+            # ৩. ড্রাইভে থাকা মূল ভিডিও ডিলিট করা
             remote_file_path = f"{remote_target}/{video}"
             print(f"Deleting '{remote_file_path}' from Google Drive...")
             subprocess.run(["rclone", "deletefile", "--drive-shared-with-me", remote_file_path], check=True)
