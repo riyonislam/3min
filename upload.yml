@@ -1,0 +1,42 @@
+name: YouTube Auto Uploader
+
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types: [trigger-upload]
+
+jobs:
+  run-uploader:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install FFmpeg & Rclone
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg
+        sudo curl https://rclone.org/install.sh | sudo bash
+
+    - name: Setup Rclone Configuration
+      run: |
+        mkdir -p ~/.config/rclone
+        echo "${{ secrets.RCLONE_CONFIG }}" > ~/.config/rclone/rclone.conf
+
+    - name: Install Dependencies
+      run: |
+        pip install -r requirements.txt
+
+    - name: Execute Upload Script
+      env:
+        YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+        YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+        YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        GDRIVE_REMOTE: ${{ secrets.GDRIVE_REMOTE }}
+      run: python main.py
