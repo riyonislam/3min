@@ -28,7 +28,6 @@ DEFAULT_TAGS = ["viral", "trending", "bangla", "video"]
 # =========================================================
 
 def get_video_duration(video_path):
-    """FFprobe ব্যবহার করে ভিডিওর মোট সময়কাল (সেকেন্ডে) নির্ণয় করা"""
     cmd = [
         "ffprobe", "-v", "error",
         "-show_entries", "format=duration",
@@ -39,7 +38,6 @@ def get_video_duration(video_path):
     return float(result.stdout.strip())
 
 def apply_watermark(input_path, watermark_path, output_path):
-    """ভিডিওর প্রথম ৫ সেকেন্ড এবং শেষের ৫ সেকেন্ডে নিচের দিকে মিডেলে front.png ওয়াটারমার্ক বসানো"""
     if not os.path.exists(watermark_path):
         print(f"Warning: '{watermark_path}' পাওয়া যায়নি! মূল ভিডিওটিই আপলোড করা হবে।")
         return input_path
@@ -99,7 +97,6 @@ def load_titles():
     return titles if titles else ["My Awesome Video"]
 
 def get_title_index():
-    """গুগল ড্রাইভ থেকে ডাউনলোড হওয়া ফাইল থেকে শেষ ব্যবহৃত টাইটেল নম্বর রিড করা"""
     local_index_path = os.path.join(DOWNLOAD_DIR, INDEX_FILE_NAME)
     if os.path.exists(local_index_path):
         try:
@@ -110,7 +107,6 @@ def get_title_index():
     return 0
 
 def save_title_index(index):
-    """পরবর্তী রান-এর জন্য টাইটেল নম্বর ড্রাইভে সেভ করে রাখা"""
     local_index_path = os.path.join(DOWNLOAD_DIR, INDEX_FILE_NAME)
     with open(local_index_path, "w", encoding="utf-8") as f:
         f.write(str(index))
@@ -128,12 +124,18 @@ def main():
 
     print("Checking Google Drive for new videos using Rclone...")
     try:
+        # 📌 ডিবাগিং: ড্রাইভে কি কি ফাইল আছে লগে প্রিন্ট করবে
+        print(f"\n--- Google Drive Folder Contents ({GDRIVE_REMOTE}) ---")
+        subprocess.run(["rclone", "lsf", GDRIVE_REMOTE], check=False)
+        print("-----------------------------------------------------\n")
+
         subprocess.run(["rclone", "copy", GDRIVE_REMOTE, DOWNLOAD_DIR], check=True)
     except subprocess.CalledProcessError as e:
         print(f"Error copying files from Drive: {e}")
         return
 
-    video_extensions = ('.mp4', '.mkv', '.mov', '.avi', '.flv', '.wmv')
+    # বাড়তি কিছু ভিডিও ফরম্যাটও সাপোর্ট যোগ করা হলো
+    video_extensions = ('.mp4', '.mkv', '.mov', '.avi', '.flv', '.wmv', '.webm', '.m4v', '.3gp', '.ts', '.mts')
     downloaded_files = os.listdir(DOWNLOAD_DIR)
     video_files = [f for f in downloaded_files if f.lower().endswith(video_extensions)]
 
@@ -154,10 +156,10 @@ def main():
         # ১. ওয়াটারমার্ক প্রসেস করা
         final_video_path = apply_watermark(raw_video_path, WATERMARK_IMAGE, processed_video_path)
 
-        # ২. প্রথম থেকে শেষ ক্রমানুসারে টাইটেল নির্বাচন (লুপ সহ)
+        # ২. ক্রমানুসারে টাইটেল নির্বাচন
         actual_index = current_index % len(titles_list)
         selected_title = titles_list[actual_index]
-        current_index += 1  # পরের ভিডিওর জন্য ১ বাড়ানো
+        current_index += 1
 
         if len(selected_title) > 100:
             selected_title = selected_title[:97] + "..."
@@ -170,7 +172,7 @@ def main():
                 "title": selected_title,
                 "description": DEFAULT_DESCRIPTION,
                 "tags": DEFAULT_TAGS,
-                "categoryId": "22"  # 22 = People & Blogs
+                "categoryId": "22"
             },
             "status": {
                 "privacyStatus": "public"
@@ -195,13 +197,13 @@ def main():
             video_id = response.get("id")
             print(f"Successfully Uploaded! Video Link: https://youtu.be/{video_id}")
 
-            # ৩. সফল আপলোডের পর ড্রাইভ থেকে মূল ভিডিও ডিলিট করা
+            # ৩. ডিলিট করা
             remote_file_path = f"{GDRIVE_REMOTE}/{video}"
             print(f"Deleting '{remote_file_path}' from Google Drive...")
             subprocess.run(["rclone", "deletefile", remote_file_path], check=True)
             print("Deleted successfully from Google Drive.")
 
-            # ৪. লোকাল ফাইল ক্লিনআপ
+            # ৪. ফাইল ক্লিনআপ
             if os.path.exists(raw_video_path):
                 os.remove(raw_video_path)
             if os.path.exists(processed_video_path):
@@ -210,9 +212,7 @@ def main():
         except Exception as err:
             print(f"Failed to process '{video}': {err}")
 
-    # ৫. পরবর্তী ট্রিপের জন্য নতুন টাইটেল নম্বর ড্রাইভে আপডেট করে রাখা
     save_title_index(current_index % len(titles_list))
-
     print("\nAll tasks completed successfully!")
 
 if __name__ == "__main__":
