@@ -5,11 +5,11 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-# Environment Variables
-CLIENT_ID = os.environ.get("YOUTUBE_CLIENT_ID")
-CLIENT_SECRET = os.environ.get("YOUTUBE_CLIENT_SECRET")
-REFRESH_TOKEN = os.environ.get("YOUTUBE_REFRESH_TOKEN")
-GDRIVE_REMOTE = os.environ.get("GDRIVE_REMOTE")
+# Environment Variables (স্পেস থাকলে রিমুভ করবে)
+CLIENT_ID = os.environ.get("YOUTUBE_CLIENT_ID", "").strip()
+CLIENT_SECRET = os.environ.get("YOUTUBE_CLIENT_SECRET", "").strip()
+REFRESH_TOKEN = os.environ.get("YOUTUBE_REFRESH_TOKEN", "").strip()
+GDRIVE_REMOTE = os.environ.get("GDRIVE_REMOTE", "").strip()
 
 DOWNLOAD_DIR = "./downloads"
 PROCESSED_DIR = "./processed"
@@ -113,7 +113,7 @@ def save_title_index(index):
     
     try:
         remote_index_path = f"{GDRIVE_REMOTE}/{INDEX_FILE_NAME}"
-        subprocess.run(["rclone", "copyto", local_index_path, remote_index_path], check=True)
+        subprocess.run(["rclone", "copyto", "--drive-shared-with-me", local_index_path, remote_index_path], check=True)
         print(f"Updated next title position ({index + 1}) to Google Drive.")
     except Exception as e:
         print(f"Failed to save title index to Google Drive: {e}")
@@ -124,17 +124,17 @@ def main():
 
     print("Checking Google Drive for new videos using Rclone...")
     try:
-        # 📌 ডিবাগিং: ড্রাইভে কি কি ফাইল আছে লগে প্রিন্ট করবে
+        # ১. ড্রাইভে কী কী ফাইল আছে লগে প্রিন্ট করবে (Shared সহ)
         print(f"\n--- Google Drive Folder Contents ({GDRIVE_REMOTE}) ---")
-        subprocess.run(["rclone", "lsf", GDRIVE_REMOTE], check=False)
+        subprocess.run(["rclone", "lsf", "--drive-shared-with-me", GDRIVE_REMOTE], check=False)
         print("-----------------------------------------------------\n")
 
-        subprocess.run(["rclone", "copy", GDRIVE_REMOTE, DOWNLOAD_DIR], check=True)
+        # ২. ফাইল কপি করা (--drive-shared-with-me সহ)
+        subprocess.run(["rclone", "copy", "--drive-shared-with-me", GDRIVE_REMOTE, DOWNLOAD_DIR], check=True)
     except subprocess.CalledProcessError as e:
         print(f"Error copying files from Drive: {e}")
         return
 
-    # বাড়তি কিছু ভিডিও ফরম্যাটও সাপোর্ট যোগ করা হলো
     video_extensions = ('.mp4', '.mkv', '.mov', '.avi', '.flv', '.wmv', '.webm', '.m4v', '.3gp', '.ts', '.mts')
     downloaded_files = os.listdir(DOWNLOAD_DIR)
     video_files = [f for f in downloaded_files if f.lower().endswith(video_extensions)]
@@ -156,7 +156,7 @@ def main():
         # ১. ওয়াটারমার্ক প্রসেস করা
         final_video_path = apply_watermark(raw_video_path, WATERMARK_IMAGE, processed_video_path)
 
-        # ২. ক্রমানুসারে টাইটেল নির্বাচন
+        # ২. টাইটেল লুপ
         actual_index = current_index % len(titles_list)
         selected_title = titles_list[actual_index]
         current_index += 1
@@ -197,10 +197,10 @@ def main():
             video_id = response.get("id")
             print(f"Successfully Uploaded! Video Link: https://youtu.be/{video_id}")
 
-            # ৩. ডিলিট করা
+            # ৩. ড্রাইভ থেকে ডিলিট
             remote_file_path = f"{GDRIVE_REMOTE}/{video}"
             print(f"Deleting '{remote_file_path}' from Google Drive...")
-            subprocess.run(["rclone", "deletefile", remote_file_path], check=True)
+            subprocess.run(["rclone", "deletefile", "--drive-shared-with-me", remote_file_path], check=True)
             print("Deleted successfully from Google Drive.")
 
             # ৪. ফাইল ক্লিনআপ
