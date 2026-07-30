@@ -1,6 +1,5 @@
 import os
 import json
-import random
 import subprocess
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -15,9 +14,10 @@ GDRIVE_REMOTE = os.environ.get("GDRIVE_REMOTE")
 DOWNLOAD_DIR = "./downloads"
 PROCESSED_DIR = "./processed"
 WATERMARK_IMAGE = "front.png"
+INDEX_FILE_NAME = "title_index.txt"
 
 # =========================================================
-# আপনার ইউটিউব চ্যানেলের ডিফল্ট ডেসক্রিপশন এবং ট্যাগস এখানে বসান
+# আপনার ইউটিউব চ্যানেলের ডিফল্ট ডেসক্রিপশন এবং ট্যাগস
 # =========================================================
 DEFAULT_DESCRIPTION = """ধন্যবাদ আমার ভিডিওটি দেখার জন্য!
 ভিডিওটি ভালো লাগলে লাইক, কমেন্ট এবং সাবস্ক্রাইব করুন।
@@ -48,15 +48,12 @@ def apply_watermark(input_path, watermark_path, output_path):
         duration = get_video_duration(input_path)
         print(f"Video duration: {duration:.2f} seconds")
 
-        # ১০ সেকেন্ড বা ছোট ভিডিও হলে পুরো ভিডিওতে দেখাবে
         if duration <= 10:
             enable_expr = "between(t,0,10000)"
         else:
             start_last = max(0.0, duration - 5.0)
             enable_expr = f"between(t,0,5)+between(t,{start_last:.2f},{duration:.2f})"
 
-        # x=(W-w)/2 : আনুভূমিকভাবে মাঝখানে (Middle)
-        # y=H-h-20  : একদম নিচে ২০ পিক্সেল উপরে (Bottom)
         filter_complex = f"[0:v][1:v]overlay=x=(W-w)/2:y=H-h-20:enable='{enable_expr}'[outv]"
 
         cmd = [
@@ -65,7 +62,7 @@ def apply_watermark(input_path, watermark_path, output_path):
             "-i", watermark_path,
             "-filter_complex", filter_complex,
             "-map", "[outv]",
-            "-map", "0:a?",  # অডিও থাকলে রাখবে, না থাকলেও সমস্যা নেই
+            "-map", "0:a?",
             "-c:v", "libx264",
             "-preset", "fast",
             "-c:a", "copy",
@@ -101,6 +98,30 @@ def load_titles():
         titles = [line.strip() for line in f if line.strip()]
     return titles if titles else ["My Awesome Video"]
 
+def get_title_index():
+    """গুগল ড্রাইভ থেকে ডাউনলোড হওয়া ফাইল থেকে শেষ ব্যবহৃত টাইটেল নম্বর রিড করা"""
+    local_index_path = os.path.join(DOWNLOAD_DIR, INDEX_FILE_NAME)
+    if os.path.exists(local_index_path):
+        try:
+            with open(local_index_path, "r", encoding="utf-8") as f:
+                return int(f.read().strip())
+        except Exception:
+            return 0
+    return 0
+
+def save_title_index(index):
+    """পরবর্তী রান-এর জন্য টাইটেল নম্বর ড্রাইভে সেভ করে রাখা"""
+    local_index_path = os.path.join(DOWNLOAD_DIR, INDEX_FILE_NAME)
+    with open(local_index_path, "w", encoding="utf-8") as f:
+        f.write(str(index))
+    
+    try:
+        remote_index_path = f"{GDRIVE_REMOTE}/{INDEX_FILE_NAME}"
+        subprocess.run(["rclone", "copyto", local_index_path, remote_index_path], check=True)
+        print(f"Updated next title position ({index + 1}) to Google Drive.")
+    except Exception as e:
+        print(f"Failed to save title index to Google Drive: {e}")
+
 def main():
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     os.makedirs(PROCESSED_DIR, exist_ok=True)
@@ -123,22 +144,26 @@ def main():
     print(f"Found {len(video_files)} video(s) to process.")
 
     titles_list = load_titles()
+    current_index = get_title_index()
     youtube = setup_youtube_api()
 
     for video in video_files:
         raw_video_path = os.path.join(DOWNLOAD_DIR, video)
         processed_video_path = os.path.join(PROCESSED_DIR, f"watermarked_{video}")
 
-        # ১. ওয়াটারমার্ক ওভারলে প্রসেস করা
+        # ১. ওয়াটারমার্ক প্রসেস করা
         final_video_path = apply_watermark(raw_video_path, WATERMARK_IMAGE, processed_video_path)
 
-        # ২. টাইটেল নির্বাচন
-        selected_title = random.choice(titles_list)
+        # ২. প্রথম থেকে শেষ ক্রমানুসারে টাইটেল নির্বাচন (লুপ সহ)
+        actual_index = current_index % len(titles_list)
+        selected_title = titles_list[actual_index]
+        current_index += 1  # পরের ভিডিওর জন্য ১ বাড়ানো
+
         if len(selected_title) > 100:
             selected_title = selected_title[:97] + "..."
 
         print(f"\nProcessing File: '{video}'")
-        print(f"Assigned Title: '{selected_title}'")
+        print(f"Assigned Title ({actual_index + 1}/{len(titles_list)}): '{selected_title}'")
 
         body = {
             "snippet": {
@@ -148,7 +173,7 @@ def main():
                 "categoryId": "22"  # 22 = People & Blogs
             },
             "status": {
-                "privacyStatus": "public"  # ভিডিও সরাসরি পাবলীক হয়ে যাবে
+                "privacyStatus": "public"
             }
         }
 
@@ -170,7 +195,7 @@ def main():
             video_id = response.get("id")
             print(f"Successfully Uploaded! Video Link: https://youtu.be/{video_id}")
 
-            # ৩. সফল আপলোডের পর গুগল ড্রাইভ থেকে মূল ফাইল ডিলিট
+            # ৩. সফল আপলোডের পর ড্রাইভ থেকে মূল ভিডিও ডিলিট করা
             remote_file_path = f"{GDRIVE_REMOTE}/{video}"
             print(f"Deleting '{remote_file_path}' from Google Drive...")
             subprocess.run(["rclone", "deletefile", remote_file_path], check=True)
@@ -184,6 +209,9 @@ def main():
 
         except Exception as err:
             print(f"Failed to process '{video}': {err}")
+
+    # ৫. পরবর্তী ট্রিপের জন্য নতুন টাইটেল নম্বর ড্রাইভে আপডেট করে রাখা
+    save_title_index(current_index % len(titles_list))
 
     print("\nAll tasks completed successfully!")
 
