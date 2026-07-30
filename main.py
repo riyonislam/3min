@@ -5,7 +5,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-# Environment Variables (স্পেস থাকলে রিমুভ করবে)
+# Environment Variables
 CLIENT_ID = os.environ.get("YOUTUBE_CLIENT_ID", "").strip()
 CLIENT_SECRET = os.environ.get("YOUTUBE_CLIENT_SECRET", "").strip()
 REFRESH_TOKEN = os.environ.get("YOUTUBE_REFRESH_TOKEN", "").strip()
@@ -106,13 +106,13 @@ def get_title_index():
             return 0
     return 0
 
-def save_title_index(index):
+def save_title_index(index, remote_target):
     local_index_path = os.path.join(DOWNLOAD_DIR, INDEX_FILE_NAME)
     with open(local_index_path, "w", encoding="utf-8") as f:
         f.write(str(index))
     
     try:
-        remote_index_path = f"{GDRIVE_REMOTE}/{INDEX_FILE_NAME}"
+        remote_index_path = f"{remote_target}/{INDEX_FILE_NAME}"
         subprocess.run(["rclone", "copyto", "--drive-shared-with-me", local_index_path, remote_index_path], check=True)
         print(f"Updated next title position ({index + 1}) to Google Drive.")
     except Exception as e:
@@ -122,15 +122,24 @@ def main():
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     os.makedirs(PROCESSED_DIR, exist_ok=True)
 
+    # 📌 রিমোট পাথের ফরম্যাট অটোমেটিক ঠিক করা
+    remote_target = GDRIVE_REMOTE
+    if ":" not in remote_target:
+        remote_target = f"gdrive:{remote_target}"
+
+    print("\n=================== DIAGNOSTIC LOG ===================")
+    print(f"Target Remote Path: '{remote_target}'")
+    
+    print("\n1. All root folders in My Drive:")
+    subprocess.run(["rclone", "lsf", "gdrive:"], check=False)
+
+    print("\n2. All folders in Shared With Me:")
+    subprocess.run(["rclone", "lsf", "--drive-shared-with-me", "gdrive:"], check=False)
+    print("======================================================\n")
+
     print("Checking Google Drive for new videos using Rclone...")
     try:
-        # ১. ড্রাইভে কী কী ফাইল আছে লগে প্রিন্ট করবে (Shared সহ)
-        print(f"\n--- Google Drive Folder Contents ({GDRIVE_REMOTE}) ---")
-        subprocess.run(["rclone", "lsf", "--drive-shared-with-me", GDRIVE_REMOTE], check=False)
-        print("-----------------------------------------------------\n")
-
-        # ২. ফাইল কপি করা (--drive-shared-with-me সহ)
-        subprocess.run(["rclone", "copy", "--drive-shared-with-me", GDRIVE_REMOTE, DOWNLOAD_DIR], check=True)
+        subprocess.run(["rclone", "copy", "--drive-shared-with-me", remote_target, DOWNLOAD_DIR], check=True)
     except subprocess.CalledProcessError as e:
         print(f"Error copying files from Drive: {e}")
         return
@@ -198,12 +207,12 @@ def main():
             print(f"Successfully Uploaded! Video Link: https://youtu.be/{video_id}")
 
             # ৩. ড্রাইভ থেকে ডিলিট
-            remote_file_path = f"{GDRIVE_REMOTE}/{video}"
+            remote_file_path = f"{remote_target}/{video}"
             print(f"Deleting '{remote_file_path}' from Google Drive...")
             subprocess.run(["rclone", "deletefile", "--drive-shared-with-me", remote_file_path], check=True)
             print("Deleted successfully from Google Drive.")
 
-            # ৪. ফাইল ক্লিনআপ
+            # ৪. লোকাল ফাইল পরিষ্কার
             if os.path.exists(raw_video_path):
                 os.remove(raw_video_path)
             if os.path.exists(processed_video_path):
@@ -212,7 +221,7 @@ def main():
         except Exception as err:
             print(f"Failed to process '{video}': {err}")
 
-    save_title_index(current_index % len(titles_list))
+    save_title_index(current_index % len(titles_list), remote_target)
     print("\nAll tasks completed successfully!")
 
 if __name__ == "__main__":
