@@ -106,14 +106,15 @@ def get_title_index():
             return 0
     return 0
 
-def save_title_index(index, remote_target):
+def save_title_index(index, remote_target, flags):
     local_index_path = os.path.join(DOWNLOAD_DIR, INDEX_FILE_NAME)
     with open(local_index_path, "w", encoding="utf-8") as f:
         f.write(str(index))
     
     try:
         remote_index_path = f"{remote_target}/{INDEX_FILE_NAME}"
-        subprocess.run(["rclone", "copyto", "--drive-shared-with-me", local_index_path, remote_index_path], check=True)
+        cmd = ["rclone", "copyto"] + flags + [local_index_path, remote_index_path]
+        subprocess.run(cmd, check=True)
         print(f"Updated next title position ({index + 1}) to Google Drive.")
     except Exception as e:
         print(f"Failed to save title index to Google Drive: {e}")
@@ -122,6 +123,7 @@ def get_candidate_remotes(gdrive_remote):
     raw = gdrive_remote.strip()
     candidates = []
     
+    # ১. ফোল্ডার নাম বা পাথ বা আইডি
     if raw and ":" not in raw and "/" not in raw and len(raw) > 20 and " " not in raw:
         candidates.append(f"gdrive,root_folder_id={raw}:")
     elif raw and ":" in raw:
@@ -129,10 +131,12 @@ def get_candidate_remotes(gdrive_remote):
     elif raw:
         candidates.append(f"gdrive:{raw}")
     
+    # ২. ফোল্ডার নাম রিমোট (মাই ড্রাইভ শর্টকাট)
     shared_name_target = "gdrive:3MinHell"
     if shared_name_target not in candidates:
         candidates.append(shared_name_target)
 
+    # ৩. ফোল্ডার আইডি রিমোট
     folder_id_target = "gdrive,root_folder_id=1KX4cfmalyTyXw08NRqkOLYEPQd_6GYn4:"
     if folder_id_target not in candidates:
         candidates.append(folder_id_target)
@@ -143,40 +147,47 @@ def main():
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     os.makedirs(PROCESSED_DIR, exist_ok=True)
 
-    print("\n--- Diagnostic: Items visible in Shared With Me ---")
-    subprocess.run(["rclone", "lsf", "--drive-shared-with-me", "gdrive:"], check=False)
-    print("--------------------------------------------------\n")
-
     candidates = get_candidate_remotes(GDRIVE_REMOTE)
+    
+    # Standard My Drive Mode (for shortcuts) and Shared Mode
+    attempts = []
+    for target in candidates:
+        attempts.append({"target": target, "flags": []})
+        attempts.append({"target": target, "flags": ["--drive-shared-with-me"]})
+
     print("\n=================== GOOGLE DRIVE TARGET SEARCH ===================")
-    print(f"Candidate Targets to try: {candidates}")
+    print("Searching My Drive Shortcuts & Shared Folders...")
     print("==================================================================\n")
 
     remote_target = None
+    used_flags = []
     success = False
 
-    for target in candidates:
-        print(f"Trying Google Drive target: '{target}' ...")
+    for attempt in attempts:
+        target = attempt["target"]
+        flags = attempt["flags"]
         
+        # ডাউনলোড ফোল্ডার পরিষ্কার করা
         for item in os.listdir(DOWNLOAD_DIR):
             item_path = os.path.join(DOWNLOAD_DIR, item)
             if os.path.isfile(item_path):
                 os.remove(item_path)
 
-        res = subprocess.run(["rclone", "copy", "--drive-shared-with-me", target, DOWNLOAD_DIR], capture_output=True, text=True)
+        cmd = ["rclone", "copy"] + flags + [target, DOWNLOAD_DIR]
+        print(f"Executing: {' '.join(cmd)}")
         
+        res = subprocess.run(cmd, capture_output=True, text=True)
         downloaded = os.listdir(DOWNLOAD_DIR)
+        
         if res.returncode == 0 and len(downloaded) > 0:
-            print(f"SUCCESS: Connected to '{target}' and downloaded {len(downloaded)} item(s)!")
+            print(f"\nSUCCESS: Connected to '{target}' and downloaded {len(downloaded)} item(s)!")
             remote_target = target
+            used_flags = flags
             success = True
             break
-        else:
-            print(f"Target '{target}' returned 0 files. Trying next target...")
 
     if not success or not remote_target:
         print("Error: Could not download files from any Google Drive target.")
-        print("Tip: Make sure you clicked 'Add shortcut to Drive' on 3MinHell in combhoney4854@gmail.com Drive!")
         return
 
     downloaded_files = os.listdir(DOWNLOAD_DIR)
@@ -250,7 +261,8 @@ def main():
             # ৩. ড্রাইভে থাকা মূল ভিডিও ডিলিট করা
             remote_file_path = f"{remote_target}/{video}"
             print(f"Deleting '{remote_file_path}' from Google Drive...")
-            subprocess.run(["rclone", "deletefile", "--drive-shared-with-me", remote_file_path], check=True)
+            cmd_delete = ["rclone", "deletefile"] + used_flags + [remote_file_path]
+            subprocess.run(cmd_delete, check=True)
             print("Deleted successfully from Google Drive.")
 
             # ৪. ফাইল পরিষ্কার
@@ -262,7 +274,7 @@ def main():
         except Exception as err:
             print(f"Failed to process '{video}': {err}")
 
-    save_title_index(current_index % len(titles_list), remote_target)
+    save_title_index(current_index % len(titles_list), remote_target, used_flags)
     print("\nAll tasks completed successfully!")
 
 if __name__ == "__main__":
