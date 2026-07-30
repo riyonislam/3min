@@ -129,13 +129,13 @@ def get_candidate_remotes(gdrive_remote):
     elif raw:
         candidates.append(f"gdrive:{raw}")
     
-    folder_id_target = "gdrive,root_folder_id=1KX4cfmalyTyXw08NRqkOLYEPQd_6GYn4:"
-    if folder_id_target not in candidates:
-        candidates.append(folder_id_target)
-        
     shared_name_target = "gdrive:3MinHell"
     if shared_name_target not in candidates:
         candidates.append(shared_name_target)
+
+    folder_id_target = "gdrive,root_folder_id=1KX4cfmalyTyXw08NRqkOLYEPQd_6GYn4:"
+    if folder_id_target not in candidates:
+        candidates.append(folder_id_target)
         
     return candidates
 
@@ -153,24 +153,33 @@ def main():
 
     for target in candidates:
         print(f"Trying Google Drive target: '{target}' ...")
+        
+        # ডাউনলোড ফোল্ডার ফ্রেশ করা
+        for item in os.listdir(DOWNLOAD_DIR):
+            item_path = os.path.join(DOWNLOAD_DIR, item)
+            if os.path.isfile(item_path):
+                os.remove(item_path)
+
         res = subprocess.run(["rclone", "copy", "--drive-shared-with-me", target, DOWNLOAD_DIR], capture_output=True, text=True)
-        if res.returncode == 0:
-            print(f"SUCCESS: Connected to '{target}' and copied files!")
+        
+        downloaded = os.listdir(DOWNLOAD_DIR)
+        # যতক্ষণ না ফাইল ডাউনলোড হচ্ছে, লুপ থামবে না
+        if res.returncode == 0 and len(downloaded) > 0:
+            print(f"SUCCESS: Connected to '{target}' and downloaded {len(downloaded)} item(s)!")
             remote_target = target
             success = True
             break
         else:
-            print(f"Path '{target}' response: {res.stderr.strip()}")
+            print(f"Target '{target}' returned 0 files. Trying next target...")
 
     if not success or not remote_target:
-        print("Error: Could not find or copy files from any Google Drive target.")
+        print("Error: Could not download files from any Google Drive target.")
+        print("Tip: Make sure you clicked 'Add shortcut to Drive' on 3MinHell in combhoney4854@gmail.com Drive!")
         return
 
-    # সব ধরণের ডাউনলোড হওয়া ফাইল রিড করা
     downloaded_files = os.listdir(DOWNLOAD_DIR)
     print(f"\nAll downloaded items from Google Drive: {downloaded_files}")
 
-    # স্টেট ফাইল ও হিডেন ফাইল বাদ দিয়ে বাকি সব ফাইলকে ভিডিও হিসেবে ধরা
     video_files = [
         f for f in downloaded_files 
         if os.path.isfile(os.path.join(DOWNLOAD_DIR, f)) 
@@ -236,7 +245,7 @@ def main():
             video_id = response.get("id")
             print(f"Successfully Uploaded! Video Link: https://youtu.be/{video_id}")
 
-            # ৩. ড্রাইভ থেকে ডিলিট
+            # ৩. ড্রাইভ থেকে ফাইল ডিলিট
             remote_file_path = f"{remote_target}/{video}"
             print(f"Deleting '{remote_file_path}' from Google Drive...")
             subprocess.run(["rclone", "deletefile", "--drive-shared-with-me", remote_file_path], check=True)
