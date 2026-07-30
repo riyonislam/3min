@@ -122,7 +122,6 @@ def get_candidate_remotes(gdrive_remote):
     raw = gdrive_remote.strip()
     candidates = []
     
-    # ১. ইউজার ফোল্ডার আইডি দিলে সঠিকভাবে Rclone Syntax তৈরি করা
     if raw and ":" not in raw and "/" not in raw and len(raw) > 20 and " " not in raw:
         candidates.append(f"gdrive,root_folder_id={raw}:")
     elif raw and ":" in raw:
@@ -130,12 +129,10 @@ def get_candidate_remotes(gdrive_remote):
     elif raw:
         candidates.append(f"gdrive:{raw}")
     
-    # ২. ফোল্ডার আইডি ডিরেক্ট রিমোট
     folder_id_target = "gdrive,root_folder_id=1KX4cfmalyTyXw08NRqkOLYEPQd_6GYn4:"
     if folder_id_target not in candidates:
         candidates.append(folder_id_target)
         
-    # ৩. শেয়ার্ড নেম রিমোট
     shared_name_target = "gdrive:3MinHell"
     if shared_name_target not in candidates:
         candidates.append(shared_name_target)
@@ -154,7 +151,6 @@ def main():
     remote_target = None
     success = False
 
-    # সঠিক Rclone সিনট্যাক্স দিয়ে গুগল ড্রাইভের শেয়ার্ড ফোল্ডারে কানেক্ট করা
     for target in candidates:
         print(f"Trying Google Drive target: '{target}' ...")
         res = subprocess.run(["rclone", "copy", "--drive-shared-with-me", target, DOWNLOAD_DIR], capture_output=True, text=True)
@@ -170,15 +166,23 @@ def main():
         print("Error: Could not find or copy files from any Google Drive target.")
         return
 
-    video_extensions = ('.mp4', '.mkv', '.mov', '.avi', '.flv', '.wmv', '.webm', '.m4v', '.3gp', '.ts', '.mts')
+    # সব ধরণের ডাউনলোড হওয়া ফাইল রিড করা
     downloaded_files = os.listdir(DOWNLOAD_DIR)
-    video_files = [f for f in downloaded_files if f.lower().endswith(video_extensions)]
+    print(f"\nAll downloaded items from Google Drive: {downloaded_files}")
+
+    # স্টেট ফাইল ও হিডেন ফাইল বাদ দিয়ে বাকি সব ফাইলকে ভিডিও হিসেবে ধরা
+    video_files = [
+        f for f in downloaded_files 
+        if os.path.isfile(os.path.join(DOWNLOAD_DIR, f)) 
+        and f != INDEX_FILE_NAME 
+        and not f.startswith(".")
+    ]
 
     if not video_files:
         print("No new videos found in downloaded Google Drive folder.")
         return
 
-    print(f"Found {len(video_files)} video(s) to process.")
+    print(f"Found {len(video_files)} video(s) to process: {video_files}")
 
     titles_list = load_titles()
     current_index = get_title_index()
@@ -186,7 +190,7 @@ def main():
 
     for video in video_files:
         raw_video_path = os.path.join(DOWNLOAD_DIR, video)
-        processed_video_path = os.path.join(PROCESSED_DIR, f"watermarked_{video}")
+        processed_video_path = os.path.join(PROCESSED_DIR, f"watermarked_{video}.mp4")
 
         # ১. ওয়াটারমার্ক প্রসেস করা
         final_video_path = apply_watermark(raw_video_path, WATERMARK_IMAGE, processed_video_path)
@@ -232,7 +236,7 @@ def main():
             video_id = response.get("id")
             print(f"Successfully Uploaded! Video Link: https://youtu.be/{video_id}")
 
-            # ৩. ড্রাইভে থাকা মূল ভিডিও ডিলিট করা
+            # ৩. ড্রাইভ থেকে ডিলিট
             remote_file_path = f"{remote_target}/{video}"
             print(f"Deleting '{remote_file_path}' from Google Drive...")
             subprocess.run(["rclone", "deletefile", "--drive-shared-with-me", remote_file_path], check=True)
