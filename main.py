@@ -27,6 +27,13 @@ DEFAULT_DESCRIPTION = """ধন্যবাদ আমার ভিডিওট�
 DEFAULT_TAGS = ["viral", "trending", "bangla", "video"]
 # =========================================================
 
+def get_remote_path(remote_target, filename):
+    """rclone এর জন্য সঠিক পাথ তৈরি করে (যেমন: remote:file বা remote/file)"""
+    remote_target = remote_target.rstrip('/')
+    if remote_target.endswith(':'):
+        return f"{remote_target}{filename}"
+    return f"{remote_target}/{filename}"
+
 def get_video_duration(video_path):
     cmd = [
         "ffprobe", "-v", "error",
@@ -112,7 +119,7 @@ def save_title_index(index, remote_target, flags):
         f.write(str(index))
     
     try:
-        remote_index_path = f"{remote_target}/{INDEX_FILE_NAME}"
+        remote_index_path = get_remote_path(remote_target, INDEX_FILE_NAME)
         cmd = ["rclone", "copyto"] + flags + [local_index_path, remote_index_path]
         subprocess.run(cmd, check=True)
         print(f"Updated next title position ({index + 1}) to Google Drive.")
@@ -131,16 +138,16 @@ def get_candidate_remotes(gdrive_remote):
     elif raw:
         candidates.append(f"gdrive:{raw}")
     
-    # ২. ফোল্ডার নাম রিমোট (মাই ড্রাইভ শর্টকাট)
+    # ২. ফোল্ডার আইডি রিমোট (আপনার ফোল্ডারের সরাসরি আইডি)
+    folder_id_target = "gdrive,root_folder_id=1KX4cfmalyTyXw08NRqkOLYEPQd_6GYn4:"
+    if folder_id_target not in candidates:
+        candidates.append(folder_id_target)
+
+    # ৩. ফোল্ডার নাম রিমোট (মাই ড্রাইভ শর্টকাট)
     shared_name_target = "gdrive:3MinHell"
     if shared_name_target not in candidates:
         candidates.append(shared_name_target)
 
-    # ৩. ফোল্ডার আইডি রিমোট
-    folder_id_target = "gdrive,root_folder_id=1KX4cfmalyTyXw08NRqkOLYEPQd_6GYn4:"
-    if folder_id_target not in candidates:
-        candidates.append(folder_id_target)
-        
     return candidates
 
 def main():
@@ -149,7 +156,6 @@ def main():
 
     candidates = get_candidate_remotes(GDRIVE_REMOTE)
     
-    # Standard My Drive Mode (for shortcuts) and Shared Mode
     attempts = []
     for target in candidates:
         attempts.append({"target": target, "flags": []})
@@ -179,15 +185,23 @@ def main():
         res = subprocess.run(cmd, capture_output=True, text=True)
         downloaded = os.listdir(DOWNLOAD_DIR)
         
-        if res.returncode == 0 and len(downloaded) > 0:
-            print(f"\nSUCCESS: Connected to '{target}' and downloaded {len(downloaded)} item(s)!")
+        video_files = [
+            f for f in downloaded 
+            if os.path.isfile(os.path.join(DOWNLOAD_DIR, f)) 
+            and f != INDEX_FILE_NAME 
+            and not f.startswith(".")
+        ]
+
+        # শুধু তখনই সফল হিসেবে ধরবে যখন অন্তত ১টি ভিডিও ফাইল পাওয়া যাবে
+        if res.returncode == 0 and len(video_files) > 0:
+            print(f"\nSUCCESS: Connected to '{target}' and found {len(video_files)} video file(s)!")
             remote_target = target
             used_flags = flags
             success = True
             break
 
     if not success or not remote_target:
-        print("Error: Could not download files from any Google Drive target.")
+        print("Error: Could not find any video files in Google Drive targets.")
         return
 
     downloaded_files = os.listdir(DOWNLOAD_DIR)
@@ -199,10 +213,6 @@ def main():
         and f != INDEX_FILE_NAME 
         and not f.startswith(".")
     ]
-
-    if not video_files:
-        print("No new videos found in downloaded Google Drive folder.")
-        return
 
     print(f"Found {len(video_files)} video(s) to process: {video_files}")
 
@@ -217,10 +227,9 @@ def main():
         # ১. ওয়াটারমার্ক প্রসেস করা
         final_video_path = apply_watermark(raw_video_path, WATERMARK_IMAGE, processed_video_path)
 
-        # ২. ক্রমানুসারে টাইটেল নেওয়া (Loop)
+        # ২. ক্রমানুসারে টাইটেল নেওয়া
         actual_index = current_index % len(titles_list)
         selected_title = titles_list[actual_index]
-        current_index += 1
 
         if len(selected_title) > 100:
             selected_title = selected_title[:97] + "..."
@@ -258,22 +267,26 @@ def main():
             video_id = response.get("id")
             print(f"Successfully Uploaded! Video Link: https://youtu.be/{video_id}")
 
+            # ইউটিউব আপলোড সফল হলেই কেবল টাইটেল ইনডেক্স বাড়ানো হবে
+            current_index += 1
+
             # ৩. ড্রাইভে থাকা মূল ভিডিও ডিলিট করা
-            remote_file_path = f"{remote_target}/{video}"
+            remote_file_path = get_remote_path(remote_target, video)
             print(f"Deleting '{remote_file_path}' from Google Drive...")
             cmd_delete = ["rclone", "deletefile"] + used_flags + [remote_file_path]
             subprocess.run(cmd_delete, check=True)
             print("Deleted successfully from Google Drive.")
 
-            # ৪. ফাইল পরিষ্কার
+            # ৪. লোকাল ফাইল ডিলিট করে পরিষ্কার করা
             if os.path.exists(raw_video_path):
                 os.remove(raw_video_path)
-            if os.path.exists(processed_video_path):
+            if os.path.exists(processed_video_path) and processed_video_path != raw_video_path:
                 os.remove(processed_video_path)
 
         except Exception as err:
             print(f"Failed to process '{video}': {err}")
 
+    # নতুন ইনডেক্স ড্রাইভে সেভ করা
     save_title_index(current_index % len(titles_list), remote_target, used_flags)
     print("\nAll tasks completed successfully!")
 
