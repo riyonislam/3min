@@ -1,5 +1,6 @@
 import os
 import json
+import random
 import subprocess
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -16,16 +17,58 @@ PROCESSED_DIR = "./processed"
 WATERMARK_IMAGE = "front.png"
 INDEX_FILE_NAME = "title_index.txt"
 
-# =========================================================
-# আপনার ইউটিউব চ্যানেলের ডিফল্ট ডেসক্রিপশন এবং ট্যাগস
-# =========================================================
-DEFAULT_DESCRIPTION = """ধন্যবাদ আমার ভিডিওটি দেখার জন্য!
+def load_description():
+    """Des.txt ফাইল থেকে ডেসক্রিপশন লোড করে, ফাইল না থাকলে ডিফল্ট ডেসক্রিপশন ব্যবহার করে"""
+    des_file = "Des.txt"
+    if os.path.exists(des_file):
+        try:
+            with open(des_file, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                if content:
+                    return content
+        except Exception as e:
+            print(f"Warning: Could not read '{des_file}': {e}")
+            
+    return """ধন্যবাদ আমার ভিডিওটি দেখার জন্য!
 ভিডিওটি ভালো লাগলে লাইক, কমেন্ট এবং সাবস্ক্রাইব করুন।
 
 #viral #video #trending"""
 
-DEFAULT_TAGS = ["viral", "trending", "bangla", "video"]
-# =========================================================
+def load_and_select_tags(max_chars=450):
+    """Tags.txt থেকে ট্যাগ লোড করে র্যান্ডমভাবে সর্বোচ্চ ৪৫০ ক্যারেক্টারের ট্যাগ সিলেক্ট করে"""
+    tag_file = "Tags.txt"
+    tags = []
+    if os.path.exists(tag_file):
+        try:
+            with open(tag_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        if "," in line:
+                            parts = [p.strip() for p in line.split(",") if p.strip()]
+                            tags.extend(parts)
+                        else:
+                            tags.append(line)
+        except Exception as e:
+            print(f"Warning: Could not read '{tag_file}': {e}")
+
+    if not tags:
+        tags = ["viral", "trending", "bangla", "video", "gaming", "minimilitia"]
+
+    # ডুপ্লিকেট ট্যাগ বাদ দেওয়া এবং র্যান্ডমভাবে সাফল (Shuffle) করা
+    unique_tags = list(dict.fromkeys(tags))
+    random.shuffle(unique_tags)
+
+    selected = []
+    current_len = 0
+    for tag in unique_tags:
+        # ইউটিউব ট্যাগ লিমিট ৫০০ ক্যারেক্টার (নিরাপত্তার জন্য ৪৫০ ক্যারেক্টার লিমিট ধরা হয়েছে)
+        tag_cost = len(tag) + (1 if selected else 0)
+        if current_len + tag_cost <= max_chars:
+            selected.append(tag)
+            current_len += tag_cost
+
+    return selected if selected else ["viral", "trending"]
 
 def get_remote_path(remote_target, filename):
     """rclone এর জন্য সঠিক পাথ তৈরি করে (যেমন: remote:file বা remote/file)"""
@@ -39,7 +82,7 @@ def get_video_duration(video_path):
         "ffprobe", "-v", "error",
         "-show_entries", "format=duration",
         "-of", "default=noprintwrappers=1:nokey=1",
-        video_path
+        "-i", video_path
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, check=True)
     return float(result.stdout.strip())
@@ -83,7 +126,6 @@ def apply_watermark(input_path, watermark_path, output_path):
         return input_path
 
 def setup_youtube_api():
-    # scopes=None রাখা হয়েছে যেন Refresh Token-এর ভেতরের Scope সঠিকভাব ব্যবহৃত হয়
     creds = Credentials(
         token=None,
         refresh_token=REFRESH_TOKEN,
@@ -131,7 +173,6 @@ def get_candidate_remotes(gdrive_remote):
     raw = gdrive_remote.strip()
     candidates = []
     
-    # ১. ফোল্ডার নাম বা পাথ বা আইডি
     if raw and ":" not in raw and "/" not in raw and len(raw) > 20 and " " not in raw:
         candidates.append(f"gdrive,root_folder_id={raw}:")
     elif raw and ":" in raw:
@@ -139,12 +180,10 @@ def get_candidate_remotes(gdrive_remote):
     elif raw:
         candidates.append(f"gdrive:{raw}")
     
-    # ২. ফোল্ডার আইডি রিমোট (আপনার ফোল্ডারের সরাসরি আইডি)
     folder_id_target = "gdrive,root_folder_id=1KX4cfmalyTyXw08NRqkOLYEPQd_6GYn4:"
     if folder_id_target not in candidates:
         candidates.append(folder_id_target)
 
-    # ৩. ফোল্ডার নাম রিমোট (মাই ড্রাইভ শর্টকাট)
     shared_name_target = "gdrive:3MinHell"
     if shared_name_target not in candidates:
         candidates.append(shared_name_target)
@@ -174,7 +213,6 @@ def main():
         target = attempt["target"]
         flags = attempt["flags"]
         
-        # ডাউনলোড ফোল্ডার পরিষ্কার করা
         for item in os.listdir(DOWNLOAD_DIR):
             item_path = os.path.join(DOWNLOAD_DIR, item)
             if os.path.isfile(item_path):
@@ -193,7 +231,6 @@ def main():
             and not f.startswith(".")
         ]
 
-        # শুধু তখনই সফল হিসেবে ধরবে যখন অন্তত ১টি ভিডিও ফাইল পাওয়া যাবে
         if res.returncode == 0 and len(video_files) > 0:
             print(f"\nSUCCESS: Connected to '{target}' and found {len(video_files)} video file(s)!")
             remote_target = target
@@ -235,14 +272,19 @@ def main():
         if len(selected_title) > 100:
             selected_title = selected_title[:97] + "..."
 
+        # ৩. ডেসক্রিপশন এবং র্যান্ডম ট্যাগ লোড করা
+        description = load_description()
+        selected_tags = load_and_select_tags(max_chars=450)
+
         print(f"\nProcessing File: '{video}'")
         print(f"Assigned Title ({actual_index + 1}/{len(titles_list)}): '{selected_title}'")
+        print(f"Selected {len(selected_tags)} Tags: {selected_tags}")
 
         body = {
             "snippet": {
                 "title": selected_title,
-                "description": DEFAULT_DESCRIPTION,
-                "tags": DEFAULT_TAGS,
+                "description": description,
+                "tags": selected_tags,
                 "categoryId": "22"
             },
             "status": {
@@ -268,17 +310,18 @@ def main():
             video_id = response.get("id")
             print(f"Successfully Uploaded! Video Link: https://youtu.be/{video_id}")
 
-            # ইউটিউব আপলোড সফল হলেই কেবল টাইটেল ইনডেক্স বাড়ানো হবে
             current_index += 1
 
-            # ৩. ড্রাইভে থাকা মূল ভিডিও ডিলিট করা
             remote_file_path = get_remote_path(remote_target, video)
             print(f"Deleting '{remote_file_path}' from Google Drive...")
-            cmd_delete = ["rclone", "deletefile"] + used_flags + [remote_file_path]
-            subprocess.run(cmd_delete, check=True)
-            print("Deleted successfully from Google Drive.")
+            cmd_delete = ["rclone", "deletefile", "--drive-use-trash=true"] + used_flags + [remote_file_path]
+            
+            try:
+                subprocess.run(cmd_delete, check=True)
+                print("Deleted successfully from Google Drive.")
+            except Exception as del_err:
+                print(f"Warning: Could not delete '{video}' from Google Drive ({del_err}). Video uploaded successfully anyway.")
 
-            # ৪. লোকাল ফাইল ডিলিট করে পরিষ্কার করা
             if os.path.exists(raw_video_path):
                 os.remove(raw_video_path)
             if os.path.exists(processed_video_path) and processed_video_path != raw_video_path:
@@ -287,7 +330,6 @@ def main():
         except Exception as err:
             print(f"Failed to process '{video}': {err}")
 
-    # নতুন ইনডেক্স ড্রাইভে সেভ করা
     save_title_index(current_index % len(titles_list), remote_target, used_flags)
     print("\nAll tasks completed successfully!")
 
