@@ -83,13 +83,14 @@ def apply_watermark(input_path, watermark_path, output_path):
         return input_path
 
 def setup_youtube_api():
+    # scopes=None রাখা হয়েছে যেন Refresh Token-এর ভেতরের Scope সঠিকভাব ব্যবহৃত হয়
     creds = Credentials(
         token=None,
         refresh_token=REFRESH_TOKEN,
         token_uri="https://oauth2.googleapis.com/token",
         client_id=CLIENT_ID,
         client_secret=CLIENT_SECRET,
-        scopes=["https://www.googleapis.com/auth/youtube.upload"]
+        scopes=None
     )
     return build("youtube", "v3", credentials=creds)
 
